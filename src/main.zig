@@ -78,7 +78,7 @@ fn u8lerp(a: u8, b: u8, t: f32) u8 {
     return @as(u8, @intFromFloat(@round(out)));
 }
 
-fn subSample(img: []const u8, pos: vec.Vector2, width: usize, height: usize) u8 {
+fn subSampleLinear(img: []const u8, pos: vec.Vector2, width: usize, height: usize) u8 {
     //0 1
     //2 3
     const x0: usize = std.math.clamp(@as(usize, @intFromFloat(@floor(pos.x))), 0, width);
@@ -104,17 +104,24 @@ fn subSample(img: []const u8, pos: vec.Vector2, width: usize, height: usize) u8 
     return u8lerp(t0, t1, std.math.modf(pos.y).fpart);
 }
 
+fn subSampleNearest(img: []const u8, pos: vec.Vector2, width: usize, height: usize) u8 {
+    const x: usize = std.math.clamp(@as(usize, @intFromFloat(@floor(pos.x))), 0, width);
+    const y: usize = std.math.clamp(@as(usize, @intFromFloat(@floor(pos.y))), 0, height);
+
+    return img[y * width + x];
+}
+
 fn applyUndistortMap(inImg: []const u8, outImg: []u8, map: []vec.Vector2, width: usize, height: usize) void {
     for (0..height) |y| {
         for (0..width) |x| {
             const i: usize = y * width + x;
-            outImg[i] = subSample(inImg, map[i], width, height);
+            outImg[i] = subSampleNearest(inImg, map[i], width, height);
         }
     }
 }
 
 fn displayGrayscaleImage(img: []const u8, width: usize, height: usize) void {
-    var buffer: [1024 * 1024]u32 = std.mem.zeroes([1024 * 1024]u32);
+    var buffer: [1024 * 1024]u32 = undefined;
     for (0..width * height) |i| {
         const val: u32 = img[i];
         buffer[i] = val << 16 | val << 8 | val;
@@ -134,21 +141,30 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
-    var filePath: []const u8 = "in.png";
+    var dirPath: []const u8 = "in.png";
     if (args.len > 1) {
-        filePath = args[1];
+        dirPath = args[1];
     }
 
-    std.debug.print("Opening \"{s}\"...\n", .{filePath});
+    std.debug.print("Opening \"{s}\"...\n", .{dirPath});
 
-    var img = try zigimg.Image.fromFilePath(allocator, filePath);
-    defer img.deinit();
-    std.debug.print("Pixel format: {}\n", .{img.pixelFormat()});
+    var dataDir: std.fs.Dir = try std.fs.openDirAbsolute(dirPath, .{});
 
-    const undistortMap: []vec.Vector2 = try genUndistortMap(allocator, img.width, img.height);
+    const imageList: std.fs.File = try dataDir.openFile("cam0/data.csv", .{});
+    var listBr = std.io.bufferedReader(imageList.reader());
+    const listReader = listBr.reader();
+
+    const startFilePath: []const u8 = try dataDir.realpathAlloc(allocator, "reenc/cam0/data/1403636579763555584.png");
+    defer allocator.free(startFilePath);
+
+    var startImg = try zigimg.Image.fromFilePath(allocator, startFilePath);
+    defer startImg.deinit();
+    std.debug.print("Pixel format: {}\n", .{startImg.pixelFormat()});
+
+    const undistortMap: []vec.Vector2 = try genUndistortMap(allocator, startImg.width, startImg.height);
     defer allocator.free(undistortMap);
 
-    _ = c.CNFGSetup("Raw draw template", @as(c_int, @intCast(img.width)), @as(c_int, @intCast(img.height)));
+    _ = c.CNFGSetup("Raw draw template", @as(c_int, @intCast(startImg.width)), @as(c_int, @intCast(startImg.height)));
 
     const stdout_file = std.io.getStdOut().writer();
     var bw = std.io.bufferedWriter(stdout_file);
@@ -157,11 +173,39 @@ pub fn main() !void {
 
     var frameTimer: std.time.Timer = try std.time.Timer.start();
     var frameNum: usize = 0;
-    while (c.CNFGHandleInput() != 0) {
+    while (c.CNFGHandleInput() != 0 and frameNum < 10) {
         _ = frameTimer.reset();
         c.CNFGClearFrame();
 
-        var buf: [1024 * 1024]u8 = std.mem.zeroes([1024 * 1024]u8);
+        var filePathBuf: [1024]u8 = std.mem.zeroes([1024]u8);
+
+        var lineBuf: [1024]u8 = std.mem.zeroes([1024]u8);
+        var filePath: []const u8 = undefined;
+        const lineOptional = try listReader.readUntilDelimiterOrEof(&lineBuf, '\n');
+        if (lineOptional) |line| {
+            const trimmedLine: []const u8 = std.mem.trim(u8, line, " ");
+            if (trimmedLine[0] == '#') {
+                continue;
+            }
+
+            if (std.mem.indexOf(u8, trimmedLine, ",")) |index| {
+                const timeStamp: u64 = try std.fmt.parseInt(u64, trimmedLine[0..index], 10);
+                _ = timeStamp;
+                var relativePathBuf: [1024]u8 = std.mem.zeroes([1024]u8);
+                const filePathRel = try std.fmt.bufPrint(&relativePathBuf, "reenc/cam0/data/{s}", .{trimmedLine[index + 1 .. trimmedLine.len - 1]});
+
+                filePath = try dataDir.realpath(filePathRel, &filePathBuf);
+            } else {
+                continue; //I guess it's a comment or something
+            }
+        } else {
+            break;
+        }
+
+        var img = try zigimg.Image.fromFilePath(allocator, filePath);
+        defer img.deinit();
+
+        var buf: [1024 * 1024]u8 = undefined;
         applyUndistortMap(img.rawBytes(), &buf, undistortMap, img.width, img.height);
         displayGrayscaleImage(&buf, img.width, img.height);
 
@@ -171,6 +215,7 @@ pub fn main() !void {
             std.time.sleep(16_666_666 - frameTime);
         }
         frameNum += 1;
+        std.debug.print("{}\n", .{frameNum});
     }
 
     try bw.flush();
