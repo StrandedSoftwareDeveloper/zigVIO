@@ -43,10 +43,6 @@
         //    // actually used.
         //    .lazy = false,
         //},
-        .zigimg = .{
-            .url = "https://github.com/zigimg/zigimg/archive/268c786ff5550ccb35c46a5fe804483ff210bd24.tar.gz",
-            .hash = "1220fc66474870d6ed00f442556718cb0dc7a4cb8137074370689aa8922bcc4a8bd6",
-        },
     },
 
     // Specifies the set of files and directories that are included in this package.

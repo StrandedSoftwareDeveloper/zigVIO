@@ -39,18 +39,12 @@ pub fn build(b: *std.Build) void {
     exe.use_llvm = false;
     exe.use_lld = false;
 
-    const zigimg_dep = b.dependency("zigimg", .{
-        .target = target,
-        .optimize = optimize,
-    });
-
-    exe.root_module.addImport("zigimg", zigimg_dep.module("zigimg"));
-
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
     // step when running `zig build`).
     exe.linkLibC();
     exe.addIncludePath(.{ .path = "include/" });
+    exe.addCSourceFile(.{ .file = .{ .path = "src/stb_image_impl.c" } });
     exe.linkSystemLibrary("X11");
 
     b.installArtifact(exe);

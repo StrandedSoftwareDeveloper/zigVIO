@@ -1,9 +1,9 @@
 const std = @import("std");
-const zigimg = @import("zigimg");
 const vec = @import("vector.zig");
 const c = @cImport({
     @cDefine("CNFG_IMPLEMENTATION", {});
     @cInclude("rawdraw_sf.h");
+    @cInclude("stb_image.h");
 });
 
 export var CNFGPenX: c_int = 0;
@@ -136,6 +136,16 @@ fn displayGrayscaleImage(img: Image) void {
     c.CNFGBlitImage(&buffer, 0, 0, @as(c_int, @intCast(img.width)), @as(c_int, @intCast(img.height)));
 }
 
+fn loadImage(path: [*c]const u8, widthOut: *usize, heightOut: *usize) []u8 {
+    var n: c_int = 0;
+    var width: c_int = 0;
+    var height: c_int = 0;
+    const data: [*c]u8 = c.stbi_load(path, &width, &height, &n, 1);
+    widthOut.* = @as(usize, @intCast(width));
+    heightOut.* = @as(usize, @intCast(height));
+    return data[0..std.mem.len(data)];
+}
+
 fn loadImages(allocator: std.mem.Allocator, dir: std.fs.Dir) !std.ArrayList(Image) {
     var images: std.ArrayList(Image) = std.ArrayList(Image).init(allocator);
 
@@ -161,12 +171,14 @@ fn loadImages(allocator: std.mem.Allocator, dir: std.fs.Dir) !std.ArrayList(Imag
 
                 filePath = try dir.realpath(filePathRel, &filePathBuf);
 
-                var img = try zigimg.Image.fromFilePath(allocator, filePath);
-                defer img.deinit();
+                //var img = try zigimg.Image.fromFilePath(allocator, filePath);
+                //defer img.deinit();
 
-                var image: Image = .{ .data = undefined, .width = img.width, .height = img.height, .timestamp = timestamp };
-                image.data = try allocator.alloc(u8, image.width * image.height);
-                @memcpy(image.data, img.rawBytes());
+                var image: Image = .{ .data = undefined, .width = 0, .height = 0, .timestamp = timestamp };
+                const finalPath: [:0]u8 = try allocator.dupeZ(u8, filePath);
+                defer allocator.free(finalPath);
+                image.data = loadImage(finalPath, &image.width, &image.height);
+
                 try images.append(image);
             } else {
                 continue; //I guess it's a comment or something
@@ -181,7 +193,7 @@ fn loadImages(allocator: std.mem.Allocator, dir: std.fs.Dir) !std.ArrayList(Imag
 
 fn unloadImages(images: std.ArrayList(Image)) void {
     for (images.items) |img| {
-        images.allocator.free(img.data);
+        c.stbi_image_free(img.data.ptr);
     }
     images.deinit();
 }
@@ -210,19 +222,17 @@ pub fn main() !void {
     const startFilePath: []const u8 = try dataDir.realpathAlloc(allocator, "reenc/cam0/data/1403636579763555584.png");
     defer allocator.free(startFilePath);
 
-    var startImg = try zigimg.Image.fromFilePath(allocator, startFilePath);
-    defer startImg.deinit();
-    std.debug.print("Pixel format: {}\n", .{startImg.pixelFormat()});
-
     std.debug.print("Loading images...\n", .{});
     const images: std.ArrayList(Image) = try loadImages(allocator, dataDir);
     defer unloadImages(images);
+    const width: usize = images.items[0].width;
+    const height: usize = images.items[0].height;
     std.debug.print("Done loading!\n", .{});
 
-    const undistortMap: []vec.Vector2 = try genUndistortMap(allocator, startImg.width, startImg.height);
+    const undistortMap: []vec.Vector2 = try genUndistortMap(allocator, width, height);
     defer allocator.free(undistortMap);
 
-    _ = c.CNFGSetup("Raw draw template", @as(c_int, @intCast(startImg.width)), @as(c_int, @intCast(startImg.height)));
+    _ = c.CNFGSetup("Raw draw template", @as(c_int, @intCast(width)), @as(c_int, @intCast(height)));
 
     const stdout_file = std.io.getStdOut().writer();
     var bw = std.io.bufferedWriter(stdout_file);
