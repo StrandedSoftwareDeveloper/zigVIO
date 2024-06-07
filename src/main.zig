@@ -15,6 +15,13 @@ export var CNFGDialogColor: u32 = 0;
 var mouseX: i32 = 0;
 var mouseY: i32 = 0;
 
+const Image = struct {
+    data: []u8,
+    width: usize,
+    height: usize,
+    timestamp: u64,
+};
+
 export fn HandleKey(keycode: c_int, bDown: c_int) void {
     _ = bDown;
     _ = keycode;
@@ -111,22 +118,22 @@ fn subSampleNearest(img: []const u8, pos: vec.Vector2, width: usize, height: usi
     return img[y * width + x];
 }
 
-fn applyUndistortMap(inImg: []const u8, outImg: []u8, map: []vec.Vector2, width: usize, height: usize) void {
-    for (0..height) |y| {
-        for (0..width) |x| {
-            const i: usize = y * width + x;
-            outImg[i] = subSampleNearest(inImg, map[i], width, height);
+fn applyUndistortMap(inImg: []const u8, outImg: Image, map: []vec.Vector2) void {
+    for (0..outImg.height) |y| {
+        for (0..outImg.width) |x| {
+            const i: usize = y * outImg.width + x;
+            outImg.data[i] = subSampleNearest(inImg, map[i], outImg.width, outImg.height);
         }
     }
 }
 
-fn displayGrayscaleImage(img: []const u8, width: usize, height: usize) void {
+fn displayGrayscaleImage(img: Image) void {
     var buffer: [1024 * 1024]u32 = undefined;
-    for (0..width * height) |i| {
-        const val: u32 = img[i];
+    for (0..img.width * img.height) |i| {
+        const val: u32 = img.data[i];
         buffer[i] = val << 16 | val << 8 | val;
     }
-    c.CNFGBlitImage(&buffer, 0, 0, @as(c_int, @intCast(width)), @as(c_int, @intCast(height)));
+    c.CNFGBlitImage(&buffer, 0, 0, @as(c_int, @intCast(img.width)), @as(c_int, @intCast(img.height)));
 }
 
 pub fn main() !void {
@@ -173,7 +180,7 @@ pub fn main() !void {
 
     var frameTimer: std.time.Timer = try std.time.Timer.start();
     var frameNum: usize = 0;
-    while (c.CNFGHandleInput() != 0 and frameNum < 10) {
+    while (c.CNFGHandleInput() != 0) {
         _ = frameTimer.reset();
         c.CNFGClearFrame();
 
@@ -206,8 +213,9 @@ pub fn main() !void {
         defer img.deinit();
 
         var buf: [1024 * 1024]u8 = undefined;
-        applyUndistortMap(img.rawBytes(), &buf, undistortMap, img.width, img.height);
-        displayGrayscaleImage(&buf, img.width, img.height);
+        const undistortedImg: Image = .{ .data = &buf, .width = img.width, .height = img.height, .timestamp = 0 };
+        applyUndistortMap(img.rawBytes(), undistortedImg, undistortMap);
+        displayGrayscaleImage(undistortedImg);
 
         c.CNFGSwapBuffers();
         const frameTime = frameTimer.read();
