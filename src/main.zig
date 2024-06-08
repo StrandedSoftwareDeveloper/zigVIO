@@ -152,7 +152,7 @@ fn loadImages(allocator: std.mem.Allocator, dir: std.fs.Dir) !std.ArrayList(Imag
     const imageList: std.fs.File = try dir.openFile("cam0/data.csv", .{});
     var listBr = std.io.bufferedReader(imageList.reader());
     const listReader = listBr.reader();
-    while (images.items.len < 100) {
+    while (true) {
         var filePathBuf: [1024]u8 = std.mem.zeroes([1024]u8);
 
         var lineBuf: [1024]u8 = std.mem.zeroes([1024]u8);
@@ -199,6 +199,8 @@ fn unloadImages(images: std.ArrayList(Image)) void {
 }
 
 pub fn main() !void {
+    var timer: std.time.Timer = try std.time.Timer.start();
+
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
 
@@ -239,6 +241,9 @@ pub fn main() !void {
     const stdout = bw.writer();
     _ = stdout;
 
+    const initTime: u64 = timer.read();
+    std.debug.print("Initialization took {d:.2} seconds. Starting main loop...\n", .{@as(f64, @floatFromInt(initTime)) / std.time.ns_per_s});
+
     var frameTimer: std.time.Timer = try std.time.Timer.start();
     var frameNum: usize = 0;
     while (c.CNFGHandleInput() != 0 and frameNum < images.items.len) {
@@ -258,6 +263,9 @@ pub fn main() !void {
         frameNum += 1;
         std.debug.print("{}\n", .{frameNum});
     }
+
+    const totalTime: u64 = timer.read();
+    std.debug.print("Main loop took {d:.2} seconds. Total execution time was {d:.2} seconds.\n", .{ @as(f64, @floatFromInt(totalTime - initTime)) / std.time.ns_per_s, @as(f64, @floatFromInt(totalTime)) / std.time.ns_per_s });
 
     try bw.flush();
 }
