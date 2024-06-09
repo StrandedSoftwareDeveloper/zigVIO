@@ -14,6 +14,8 @@ export var CNFGDialogColor: u32 = 0;
 
 var mouseX: i32 = 0;
 var mouseY: i32 = 0;
+var justClicked: bool = false;
+var playing: usize = 0;
 
 const Image = struct {
     data: []u8,
@@ -22,16 +24,35 @@ const Image = struct {
     timestamp: u64,
 };
 
+const pointRad: usize = 2;
+
+const KeyPoint = struct {
+    pos: vec.Vector2,
+    description: [(pointRad * 2 + 1) * (pointRad * 2 + 1)]u8,
+};
+
 export fn HandleKey(keycode: c_int, bDown: c_int) void {
-    _ = bDown;
-    _ = keycode;
+    if (bDown == 1) {
+        if (keycode == ' ') {
+            if (playing == 0) {
+                playing = 1;
+            } else if (playing == 1) {
+                playing = 0;
+            }
+        } else if (keycode == 's') {
+            playing = 2;
+        }
+    }
 }
 
 export fn HandleButton(x: c_int, y: c_int, button: c_int, bDown: c_int) void {
-    _ = bDown;
-    _ = button;
-    _ = y;
-    _ = x;
+    if (bDown == 1) {
+        if (button == 1) {
+            justClicked = true;
+        }
+    }
+    mouseX = x;
+    mouseY = y;
 }
 
 export fn HandleMotion(x: c_int, y: c_int, mask: c_int) void {
@@ -127,13 +148,82 @@ fn applyUndistortMap(inImg: []const u8, outImg: Image, map: []vec.Vector2) void 
     }
 }
 
-fn displayGrayscaleImage(img: Image) void {
+fn calcPointErr(img: Image, x: usize, y: usize, point: KeyPoint) usize {
+    var totalError: usize = 0;
+    for (0..pointRad * 2 + 1) |descY| {
+        for (0..pointRad * 2 + 1) |descX| {
+            const imgX: usize = @as(usize, @intCast(@as(i64, @intCast(x)) + (@as(i64, @intCast(descX)) - @as(i64, @intCast(pointRad)))));
+            const imgY: usize = @as(usize, @intCast(@as(i64, @intCast(y)) + (@as(i64, @intCast(descY)) - @as(i64, @intCast(pointRad)))));
+
+            const imgVal: i16 = img.data[imgY * img.width + imgX];
+            const pointVal: i16 = point.description[descY * (pointRad * 2 + 1) + descX];
+            const pixelError: u16 = @abs(imgVal - pointVal);
+            totalError += pixelError;
+        }
+    }
+
+    return totalError;
+}
+
+fn trackPoints(img: Image, points: std.ArrayList(KeyPoint)) void {
+    const widthFloat: f32 = @as(f32, @floatFromInt(img.width));
+    const heightFloat: f32 = @as(f32, @floatFromInt(img.height));
+    const rad: f32 = 15.0;
+    for (0..points.items.len) |i| {
+        const point: KeyPoint = points.items[i];
+
+        std.debug.print("{d:.1} {d:.1}\n", .{ point.pos.x, point.pos.y });
+        const topBound: usize = @as(usize, @intFromFloat(std.math.clamp(point.pos.y - rad, 0.0, heightFloat)));
+        const bottomBound: usize = @as(usize, @intFromFloat(std.math.clamp(point.pos.y + (rad + 1), 0.0, heightFloat)));
+        const leftBound: usize = @as(usize, @intFromFloat(std.math.clamp(point.pos.x - rad, 0.0, widthFloat)));
+        const rightBound: usize = @as(usize, @intFromFloat(std.math.clamp(point.pos.x + (rad + 1), 0.0, widthFloat)));
+
+        var minErr: usize = std.math.maxInt(usize);
+        var minErrX: usize = 0;
+        var minErrY: usize = 0;
+        for (topBound + pointRad..bottomBound - pointRad) |y| {
+            for (leftBound + pointRad..rightBound - pointRad) |x| {
+                const err: usize = calcPointErr(img, x, y, point);
+                if (err < minErr) {
+                    minErr = err;
+                    minErrX = x;
+                    minErrY = y;
+                }
+            }
+        }
+
+        points.items[i].pos.x = @as(f32, @floatFromInt(minErrX));
+        points.items[i].pos.y = @as(f32, @floatFromInt(minErrY));
+    }
+}
+
+fn setPointDescription(img: Image, point: *KeyPoint, x: i64, y: i64) void {
+    for (0..pointRad * 2 + 1) |descY| {
+        for (0..pointRad * 2 + 1) |descX| {
+            const imgX: usize = @as(usize, @intCast(x + (@as(i64, @intCast(descX)) - @as(i64, @intCast(pointRad)))));
+            const imgY: usize = @as(usize, @intCast(y + (@as(i64, @intCast(descY)) - @as(i64, @intCast(pointRad)))));
+
+            const imgVal: u8 = img.data[imgY * img.width + imgX];
+            point.description[descY * (pointRad * 2 + 1) + descX] = imgVal;
+        }
+    }
+}
+
+fn displayGrayscaleImage(img: Image, points: []KeyPoint) void {
     var buffer: [1024 * 1024]u32 = undefined;
     for (0..img.width * img.height) |i| {
         const val: u32 = img.data[i];
         buffer[i] = val << 16 | val << 8 | val;
     }
+
     c.CNFGBlitImage(&buffer, 0, 0, @as(c_int, @intCast(img.width)), @as(c_int, @intCast(img.height)));
+
+    _ = c.CNFGColor(0xFF_00_00_00);
+    for (points) |point| {
+        const x: c_short = std.math.clamp(@as(c_short, @intFromFloat(@floor(point.pos.x))), 0, @as(c_short, @intCast(img.width)));
+        const y: c_short = std.math.clamp(@as(c_short, @intFromFloat(@floor(point.pos.y))), 0, @as(c_short, @intCast(img.height)));
+        c.CNFGTackRectangle(x - 2, y - 2, x + 2, y + 2);
+    }
 }
 
 fn loadImage(path: [*c]const u8, widthOut: *usize, heightOut: *usize) []u8 {
@@ -152,7 +242,7 @@ fn loadImages(allocator: std.mem.Allocator, dir: std.fs.Dir) !std.ArrayList(Imag
     const imageList: std.fs.File = try dir.openFile("cam0/data.csv", .{});
     var listBr = std.io.bufferedReader(imageList.reader());
     const listReader = listBr.reader();
-    while (true) {
+    while (images.items.len < 100) {
         var filePathBuf: [1024]u8 = std.mem.zeroes([1024]u8);
 
         var lineBuf: [1024]u8 = std.mem.zeroes([1024]u8);
@@ -234,6 +324,9 @@ pub fn main() !void {
     const undistortMap: []vec.Vector2 = try genUndistortMap(allocator, width, height);
     defer allocator.free(undistortMap);
 
+    var points: std.ArrayList(KeyPoint) = std.ArrayList(KeyPoint).init(allocator);
+    defer points.deinit();
+
     _ = c.CNFGSetup("Raw draw template", @as(c_int, @intCast(width)), @as(c_int, @intCast(height)));
 
     const stdout_file = std.io.getStdOut().writer();
@@ -253,19 +346,40 @@ pub fn main() !void {
         var buf: [1024 * 1024]u8 = undefined;
         const undistortedImg: Image = .{ .data = &buf, .width = images.items[frameNum].width, .height = images.items[frameNum].height, .timestamp = 0 };
         applyUndistortMap(images.items[frameNum].data, undistortedImg, undistortMap);
-        displayGrayscaleImage(undistortedImg);
+
+        if (justClicked) {
+            std.debug.print("Just clicked!\n", .{});
+            var point: KeyPoint = .{ .pos = .{ .x = @as(f32, @floatFromInt(mouseX)), .y = @as(f32, @floatFromInt(mouseY)) }, .description = undefined };
+            setPointDescription(undistortedImg, &point, mouseX, mouseY);
+            try points.append(point);
+            justClicked = false;
+        }
+
+        trackPoints(undistortedImg, points);
+
+        displayGrayscaleImage(undistortedImg, points.items);
 
         c.CNFGSwapBuffers();
         const frameTime = frameTimer.read();
-        if (frameTime < 16_666_666) {
-            std.time.sleep(16_666_666 - frameTime);
+        if (frameTime < 50_000_000) { //16_666_666) {
+            std.time.sleep(50_000_000 - frameTime); //20 fpss
         }
-        frameNum += 1;
+
+        if (playing > 0) {
+            frameNum += 1;
+        }
+
+        if (playing == 2) {
+            playing = 0;
+        }
+
         std.debug.print("{}\n", .{frameNum});
     }
 
     const totalTime: u64 = timer.read();
-    std.debug.print("Main loop took {d:.2} seconds. Total execution time was {d:.2} seconds.\n", .{ @as(f64, @floatFromInt(totalTime - initTime)) / std.time.ns_per_s, @as(f64, @floatFromInt(totalTime)) / std.time.ns_per_s });
+    const totalTimeSec: f64 = @as(f64, @floatFromInt(totalTime)) / std.time.ns_per_s;
+    const loopTimeSec: f64 = @as(f64, @floatFromInt(totalTime - initTime)) / std.time.ns_per_s;
+    std.debug.print("Main loop processed {} frames in {d:.2} seconds ({d:.2} fps). Total execution time was {d:.2} seconds.\n", .{ frameNum, loopTimeSec, @as(f64, @floatFromInt(frameNum)) / loopTimeSec, totalTimeSec });
 
     try bw.flush();
 }

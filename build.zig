@@ -36,8 +36,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    exe.use_llvm = false;
-    exe.use_lld = false;
+    exe.use_llvm = true;
+    exe.use_lld = true;
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
