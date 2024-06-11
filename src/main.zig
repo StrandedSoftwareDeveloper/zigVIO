@@ -194,6 +194,7 @@ fn trackPoints(img: Image, points: std.ArrayList(KeyPoint)) void {
 
         points.items[i].pos.x = @as(f32, @floatFromInt(minErrX));
         points.items[i].pos.y = @as(f32, @floatFromInt(minErrY));
+        //setPointDescription(img, &points.items[i], @as(i64, @intCast(minErrX)), @as(i64, @intCast(minErrY)));
     }
 }
 
@@ -239,7 +240,7 @@ fn loadImage(path: [*c]const u8, widthOut: *usize, heightOut: *usize) []u8 {
 fn loadImages(allocator: std.mem.Allocator, dir: std.fs.Dir) !std.ArrayList(Image) {
     var images: std.ArrayList(Image) = std.ArrayList(Image).init(allocator);
 
-    const imageList: std.fs.File = try dir.openFile("cam0/data.csv", .{});
+    const imageList: std.fs.File = try dir.openFile("data.csv", .{});
     var listBr = std.io.bufferedReader(imageList.reader());
     const listReader = listBr.reader();
     while (images.items.len < 100) {
@@ -257,7 +258,7 @@ fn loadImages(allocator: std.mem.Allocator, dir: std.fs.Dir) !std.ArrayList(Imag
             if (std.mem.indexOf(u8, trimmedLine, ",")) |index| {
                 const timestamp: u64 = try std.fmt.parseInt(u64, trimmedLine[0..index], 10);
                 var relativePathBuf: [1024]u8 = std.mem.zeroes([1024]u8);
-                const filePathRel = try std.fmt.bufPrint(&relativePathBuf, "reenc/cam0/data/{s}", .{trimmedLine[index + 1 .. trimmedLine.len - 1]});
+                const filePathRel = try std.fmt.bufPrint(&relativePathBuf, "data/{s}", .{trimmedLine[index + 1 .. trimmedLine.len - 1]});
 
                 filePath = try dir.realpath(filePathRel, &filePathBuf);
 
@@ -310,15 +311,25 @@ pub fn main() !void {
     std.debug.print("Opening \"{s}\"...\n", .{dirPath});
 
     var dataDir: std.fs.Dir = try std.fs.openDirAbsolute(dirPath, .{});
+    defer dataDir.close();
 
-    const startFilePath: []const u8 = try dataDir.realpathAlloc(allocator, "reenc/cam0/data/1403636579763555584.png");
-    defer allocator.free(startFilePath);
+    var leftCamDir: std.fs.Dir = try dataDir.openDir("cam0/", .{});
+    defer leftCamDir.close();
 
-    std.debug.print("Loading images...\n", .{});
-    const images: std.ArrayList(Image) = try loadImages(allocator, dataDir);
-    defer unloadImages(images);
-    const width: usize = images.items[0].width;
-    const height: usize = images.items[0].height;
+    std.debug.print("Loading left images...\n", .{});
+    const leftImages: std.ArrayList(Image) = try loadImages(allocator, leftCamDir);
+    defer unloadImages(leftImages);
+    const width: usize = leftImages.items[0].width;
+    const height: usize = leftImages.items[0].height;
+
+    std.debug.print("Loading right images...\n", .{});
+
+    var rightCamDir: std.fs.Dir = try dataDir.openDir("cam1/", .{});
+    defer rightCamDir.close();
+
+    const rightImages: std.ArrayList(Image) = try loadImages(allocator, rightCamDir);
+    defer unloadImages(rightImages);
+
     std.debug.print("Done loading!\n", .{});
 
     const undistortMap: []vec.Vector2 = try genUndistortMap(allocator, width, height);
@@ -339,13 +350,13 @@ pub fn main() !void {
 
     var frameTimer: std.time.Timer = try std.time.Timer.start();
     var frameNum: usize = 0;
-    while (c.CNFGHandleInput() != 0 and frameNum < images.items.len) {
+    while (c.CNFGHandleInput() != 0 and frameNum < leftImages.items.len) {
         _ = frameTimer.reset();
         c.CNFGClearFrame();
 
         var buf: [1024 * 1024]u8 = undefined;
-        const undistortedImg: Image = .{ .data = &buf, .width = images.items[frameNum].width, .height = images.items[frameNum].height, .timestamp = 0 };
-        applyUndistortMap(images.items[frameNum].data, undistortedImg, undistortMap);
+        const undistortedImg: Image = .{ .data = &buf, .width = leftImages.items[frameNum].width, .height = leftImages.items[frameNum].height, .timestamp = 0 };
+        applyUndistortMap(leftImages.items[frameNum].data, undistortedImg, undistortMap);
 
         if (justClicked) {
             std.debug.print("Just clicked!\n", .{});
