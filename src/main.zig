@@ -28,6 +28,7 @@ const pointRad: usize = 2;
 
 const KeyPoint = struct {
     pos: vec.Vector2(f32),
+    stereoPos: vec.Vector2(f32),
     descriptor: [(pointRad * 2 + 1) * (pointRad * 2 + 1)]u8,
 };
 
@@ -165,6 +166,7 @@ fn calcPointErr(img: Image, x: usize, y: usize, point: KeyPoint) usize {
     return totalError;
 }
 
+//FIXME: if rightBound or bottomBound is less than pointRad, underflow occurs
 fn findBestPointMatch(img: Image, point: KeyPoint, topBound: usize, bottomBound: usize, leftBound: usize, rightBound: usize) vec.Vector2(f32) {
     var minErr: usize = std.math.maxInt(usize);
     var minErrX: usize = 0;
@@ -203,11 +205,34 @@ fn trackPoints(img: Image, points: std.ArrayList(KeyPoint)) void {
     }
 }
 
+fn stereoMatch(otherImg: Image, point: KeyPoint) vec.Vector2(f32) {
+    const widthFloat: f32 = @as(f32, @floatFromInt(otherImg.width));
+    const heightFloat: f32 = @as(f32, @floatFromInt(otherImg.height));
+    const vertRad: f32 = pointRad * 2 + 1;
+
+    const topBound: usize = @as(usize, @intFromFloat(std.math.clamp(point.pos.y - vertRad, 0.0, heightFloat)));
+    const bottomBound: usize = @as(usize, @intFromFloat(std.math.clamp(point.pos.y + (vertRad + 1), 0.0, heightFloat)));
+
+    const leftBound: usize = @as(usize, @intFromFloat(std.math.clamp(20.0, 0.0, widthFloat)));
+    const rightBound: usize = @as(usize, @intFromFloat(std.math.clamp(point.pos.x + 1.0, 0.0, widthFloat)));
+
+    const newPos: vec.Vector2(f32) = findBestPointMatch(otherImg, point, topBound, bottomBound, leftBound, rightBound);
+    return newPos;
+}
+
 fn setPointDescriptor(img: Image, point: *KeyPoint, x: i64, y: i64) void {
+    const width: i64 = @intCast(img.width);
+    const height: i64 = @intCast(img.height);
+
     for (0..pointRad * 2 + 1) |descY| {
         for (0..pointRad * 2 + 1) |descX| {
-            const imgX: usize = @as(usize, @intCast(x + (@as(i64, @intCast(descX)) - @as(i64, @intCast(pointRad)))));
-            const imgY: usize = @as(usize, @intCast(y + (@as(i64, @intCast(descY)) - @as(i64, @intCast(pointRad)))));
+            //std.math.clamp(x + (descX - pointRad), 0, img.width);
+            const descXi: i64 = @intCast(descX);
+            const descYi: i64 = @intCast(descY);
+            const pointRadi: i64 = @intCast(pointRad);
+
+            const imgX: usize = @intCast(std.math.clamp(x + (descXi - pointRadi), 0, width));
+            const imgY: usize = @intCast(std.math.clamp(y + (descYi - pointRadi), 0, height));
 
             const imgVal: u8 = img.data[imgY * img.width + imgX];
             point.descriptor[descY * (pointRad * 2 + 1) + descX] = imgVal;
@@ -215,7 +240,7 @@ fn setPointDescriptor(img: Image, point: *KeyPoint, x: i64, y: i64) void {
     }
 }
 
-fn displayGrayscaleImage(img: Image, points: []KeyPoint) void {
+fn displayGrayscaleImage(img: Image, points: []KeyPoint, frameNum: usize) void {
     var buffer: [1024 * 1024]u32 = undefined;
     for (0..img.width * img.height) |i| {
         const val: u32 = img.data[i];
@@ -224,11 +249,20 @@ fn displayGrayscaleImage(img: Image, points: []KeyPoint) void {
 
     c.CNFGBlitImage(&buffer, 0, 0, @as(c_int, @intCast(img.width)), @as(c_int, @intCast(img.height)));
 
-    _ = c.CNFGColor(0xFF_00_00_00);
-    for (points) |point| {
-        const x: c_short = std.math.clamp(@as(c_short, @intFromFloat(@floor(point.pos.x))), 0, @as(c_short, @intCast(img.width)));
-        const y: c_short = std.math.clamp(@as(c_short, @intFromFloat(@floor(point.pos.y))), 0, @as(c_short, @intCast(img.height)));
-        c.CNFGTackRectangle(x - 2, y - 2, x + 2, y + 2);
+    if (frameNum % 2 == 0) {
+        _ = c.CNFGColor(0xFF_00_00_00);
+        for (points) |point| {
+            const x: c_short = std.math.clamp(@as(c_short, @intFromFloat(@floor(point.pos.x))), 0, @as(c_short, @intCast(img.width)));
+            const y: c_short = std.math.clamp(@as(c_short, @intFromFloat(@floor(point.pos.y))), 0, @as(c_short, @intCast(img.height)));
+            c.CNFGTackRectangle(x - 2, y - 2, x + 2, y + 2);
+        }
+    } else {
+        _ = c.CNFGColor(0x00_FF_00_00);
+        for (points) |point| {
+            const x: c_short = std.math.clamp(@as(c_short, @intFromFloat(@floor(point.stereoPos.x))), 0, @as(c_short, @intCast(img.width)));
+            const y: c_short = std.math.clamp(@as(c_short, @intFromFloat(@floor(point.stereoPos.y))), 0, @as(c_short, @intCast(img.height)));
+            c.CNFGTackRectangle(x - 2, y - 2, x + 2, y + 2);
+        }
     }
 }
 
@@ -359,21 +393,29 @@ pub fn main() !void {
         _ = frameTimer.reset();
         c.CNFGClearFrame();
 
+        var frame: Image = leftImages.items[frameNum];
+        if (frameNum % 2 == 1) {
+            frame = rightImages.items[frameNum];
+        }
+
         var buf: [1024 * 1024]u8 = undefined;
-        const undistortedImg: Image = .{ .data = &buf, .width = leftImages.items[frameNum].width, .height = leftImages.items[frameNum].height, .timestamp = 0 };
-        applyUndistortMap(leftImages.items[frameNum].data, undistortedImg, undistortMap);
+        const undistortedImg: Image = .{ .data = &buf, .width = frame.width, .height = frame.height, .timestamp = 0 };
+        applyUndistortMap(frame.data, undistortedImg, undistortMap);
 
         if (justClicked) {
-            std.debug.print("Just clicked!\n", .{});
-            var point: KeyPoint = .{ .pos = .{ .x = @as(f32, @floatFromInt(mouseX)), .y = @as(f32, @floatFromInt(mouseY)) }, .descriptor = undefined };
-            setPointDescriptor(undistortedImg, &point, mouseX, mouseY);
-            try points.append(point);
+            if (frameNum % 2 == 0) {
+                var point: KeyPoint = .{ .pos = .{ .x = @as(f32, @floatFromInt(mouseX)), .y = @as(f32, @floatFromInt(mouseY)) }, .stereoPos = undefined, .descriptor = undefined };
+                setPointDescriptor(undistortedImg, &point, mouseX, mouseY);
+                point.stereoPos = stereoMatch(rightImages.items[frameNum / 2], point);
+                //std.debug.print("{}\n", .{});
+                try points.append(point);
+            }
             justClicked = false;
         }
 
         trackPoints(undistortedImg, points);
 
-        displayGrayscaleImage(undistortedImg, points.items);
+        displayGrayscaleImage(undistortedImg, points.items, frameNum);
 
         c.CNFGSwapBuffers();
         const frameTime = frameTimer.read();
