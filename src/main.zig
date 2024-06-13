@@ -27,8 +27,8 @@ const Image = struct {
 const pointRad: usize = 2;
 
 const KeyPoint = struct {
-    pos: vec.Vector2,
-    description: [(pointRad * 2 + 1) * (pointRad * 2 + 1)]u8,
+    pos: vec.Vector2(f32),
+    descriptor: [(pointRad * 2 + 1) * (pointRad * 2 + 1)]u8,
 };
 
 export fn HandleKey(keycode: c_int, bDown: c_int) void {
@@ -62,7 +62,7 @@ export fn HandleMotion(x: c_int, y: c_int, mask: c_int) void {
 }
 export fn HandleDestroy() void {}
 
-fn genUndistortMap(allocator: std.mem.Allocator, width: usize, height: usize) ![]vec.Vector2 {
+fn genUndistortMap(allocator: std.mem.Allocator, width: usize, height: usize) ![]vec.Vector2(f32) {
     const widthFloat: f32 = @as(f32, @floatFromInt(width));
     const heightFloat: f32 = @as(f32, @floatFromInt(height));
     const half_width: f32 = @as(f32, @floatFromInt(width)) * 0.5;
@@ -70,10 +70,10 @@ fn genUndistortMap(allocator: std.mem.Allocator, width: usize, height: usize) ![
 
     const k = -0.28340811;
 
-    var map: []vec.Vector2 = try allocator.alloc(vec.Vector2, width * height);
+    var map: []vec.Vector2(f32) = try allocator.alloc(vec.Vector2(f32), width * height);
     for (0..height) |y| {
         for (0..width) |x| {
-            var pos: vec.Vector2 = .{ .x = @as(f32, @floatFromInt(x)) - half_width, .y = @as(f32, @floatFromInt(y)) - half_height };
+            var pos: vec.Vector2(f32) = .{ .x = @as(f32, @floatFromInt(x)) - half_width, .y = @as(f32, @floatFromInt(y)) - half_height };
             pos.x /= widthFloat;
             pos.y /= heightFloat;
 
@@ -132,14 +132,14 @@ fn subSampleLinear(img: []const u8, pos: vec.Vector2, width: usize, height: usiz
     return u8lerp(t0, t1, std.math.modf(pos.y).fpart);
 }
 
-fn subSampleNearest(img: []const u8, pos: vec.Vector2, width: usize, height: usize) u8 {
+fn subSampleNearest(img: []const u8, pos: vec.Vector2(f32), width: usize, height: usize) u8 {
     const x: usize = std.math.clamp(@as(usize, @intFromFloat(@floor(pos.x))), 0, width);
     const y: usize = std.math.clamp(@as(usize, @intFromFloat(@floor(pos.y))), 0, height);
 
     return img[y * width + x];
 }
 
-fn applyUndistortMap(inImg: []const u8, outImg: Image, map: []vec.Vector2) void {
+fn applyUndistortMap(inImg: []const u8, outImg: Image, map: []vec.Vector2(f32)) void {
     for (0..outImg.height) |y| {
         for (0..outImg.width) |x| {
             const i: usize = y * outImg.width + x;
@@ -156,13 +156,31 @@ fn calcPointErr(img: Image, x: usize, y: usize, point: KeyPoint) usize {
             const imgY: usize = @as(usize, @intCast(@as(i64, @intCast(y)) + (@as(i64, @intCast(descY)) - @as(i64, @intCast(pointRad)))));
 
             const imgVal: i16 = img.data[imgY * img.width + imgX];
-            const pointVal: i16 = point.description[descY * (pointRad * 2 + 1) + descX];
+            const pointVal: i16 = point.descriptor[descY * (pointRad * 2 + 1) + descX];
             const pixelError: u16 = @abs(imgVal - pointVal);
             totalError += pixelError;
         }
     }
 
     return totalError;
+}
+
+fn findBestPointMatch(img: Image, point: KeyPoint, topBound: usize, bottomBound: usize, leftBound: usize, rightBound: usize) vec.Vector2(f32) {
+    var minErr: usize = std.math.maxInt(usize);
+    var minErrX: usize = 0;
+    var minErrY: usize = 0;
+    for (topBound + pointRad..bottomBound - pointRad) |y| {
+        for (leftBound + pointRad..rightBound - pointRad) |x| {
+            const err: usize = calcPointErr(img, x, y, point);
+            if (err < minErr) {
+                minErr = err;
+                minErrX = x;
+                minErrY = y;
+            }
+        }
+    }
+
+    return .{ .x = @as(f32, @floatFromInt(minErrX)), .y = @as(f32, @floatFromInt(minErrY)) };
 }
 
 fn trackPoints(img: Image, points: std.ArrayList(KeyPoint)) void {
@@ -178,34 +196,21 @@ fn trackPoints(img: Image, points: std.ArrayList(KeyPoint)) void {
         const leftBound: usize = @as(usize, @intFromFloat(std.math.clamp(point.pos.x - rad, 0.0, widthFloat)));
         const rightBound: usize = @as(usize, @intFromFloat(std.math.clamp(point.pos.x + (rad + 1), 0.0, widthFloat)));
 
-        var minErr: usize = std.math.maxInt(usize);
-        var minErrX: usize = 0;
-        var minErrY: usize = 0;
-        for (topBound + pointRad..bottomBound - pointRad) |y| {
-            for (leftBound + pointRad..rightBound - pointRad) |x| {
-                const err: usize = calcPointErr(img, x, y, point);
-                if (err < minErr) {
-                    minErr = err;
-                    minErrX = x;
-                    minErrY = y;
-                }
-            }
-        }
+        const newPos: vec.Vector2(f32) = findBestPointMatch(img, point, topBound, bottomBound, leftBound, rightBound);
 
-        points.items[i].pos.x = @as(f32, @floatFromInt(minErrX));
-        points.items[i].pos.y = @as(f32, @floatFromInt(minErrY));
+        points.items[i].pos = newPos;
         //setPointDescription(img, &points.items[i], @as(i64, @intCast(minErrX)), @as(i64, @intCast(minErrY)));
     }
 }
 
-fn setPointDescription(img: Image, point: *KeyPoint, x: i64, y: i64) void {
+fn setPointDescriptor(img: Image, point: *KeyPoint, x: i64, y: i64) void {
     for (0..pointRad * 2 + 1) |descY| {
         for (0..pointRad * 2 + 1) |descX| {
             const imgX: usize = @as(usize, @intCast(x + (@as(i64, @intCast(descX)) - @as(i64, @intCast(pointRad)))));
             const imgY: usize = @as(usize, @intCast(y + (@as(i64, @intCast(descY)) - @as(i64, @intCast(pointRad)))));
 
             const imgVal: u8 = img.data[imgY * img.width + imgX];
-            point.description[descY * (pointRad * 2 + 1) + descX] = imgVal;
+            point.descriptor[descY * (pointRad * 2 + 1) + descX] = imgVal;
         }
     }
 }
@@ -332,7 +337,7 @@ pub fn main() !void {
 
     std.debug.print("Done loading!\n", .{});
 
-    const undistortMap: []vec.Vector2 = try genUndistortMap(allocator, width, height);
+    const undistortMap: []vec.Vector2(f32) = try genUndistortMap(allocator, width, height);
     defer allocator.free(undistortMap);
 
     var points: std.ArrayList(KeyPoint) = std.ArrayList(KeyPoint).init(allocator);
@@ -360,8 +365,8 @@ pub fn main() !void {
 
         if (justClicked) {
             std.debug.print("Just clicked!\n", .{});
-            var point: KeyPoint = .{ .pos = .{ .x = @as(f32, @floatFromInt(mouseX)), .y = @as(f32, @floatFromInt(mouseY)) }, .description = undefined };
-            setPointDescription(undistortedImg, &point, mouseX, mouseY);
+            var point: KeyPoint = .{ .pos = .{ .x = @as(f32, @floatFromInt(mouseX)), .y = @as(f32, @floatFromInt(mouseY)) }, .descriptor = undefined };
+            setPointDescriptor(undistortedImg, &point, mouseX, mouseY);
             try points.append(point);
             justClicked = false;
         }

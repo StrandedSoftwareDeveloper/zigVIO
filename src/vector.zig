@@ -57,57 +57,61 @@ pub const Mat3 = struct {
     r2: Vector3,
 };
 
-pub const Vector2 = struct {
-    x: f32,
-    y: f32,
+pub fn Vector2(T: type) type {
+    return struct {
+        const Self = @This();
 
-    pub fn length(self: Vector2) f32 {
-        return std.math.sqrt(self.length2());
-    }
+        x: T,
+        y: T,
 
-    pub fn length2(self: Vector2) f32 {
-        return self.x * self.x + self.y * self.y;
-    }
+        pub fn length(self: Self) T {
+            return std.math.sqrt(self.length2());
+        }
 
-    pub fn lerp(min: Vector2, maximum: Vector2, k: Vector2) Vector2 {
-        return .{ .x = std.math.lerp(min.x, maximum.x, k.x), .y = std.math.lerp(min.y, maximum.y, k.y) };
-    }
+        pub fn length2(self: Self) T {
+            return self.x * self.x + self.y * self.y;
+        }
 
-    pub fn divideScalar(self: *const Vector2, scalar: f32) Vector2 {
-        return .{ .x = self.x / scalar, .y = self.y / scalar };
-    }
+        pub fn lerp(min: Self, maximum: Self, k: Self) Self {
+            return .{ .x = std.math.lerp(min.x, maximum.x, k.x), .y = std.math.lerp(min.y, maximum.y, k.y) };
+        }
 
-    pub fn multScalar(self: *const Vector2, scalar: f32) Vector2 {
-        return .{ .x = self.x * scalar, .y = self.y * scalar };
-    }
+        pub fn divideScalar(self: *const Self, scalar: T) Self {
+            return .{ .x = self.x / scalar, .y = self.y / scalar };
+        }
 
-    pub fn max(a: Vector2, b: Vector2) Vector2 {
-        return .{ .x = @max(a.x, b.x), .y = @max(a.y, b.y) };
-    }
+        pub fn multScalar(self: *const Self, scalar: T) Self {
+            return .{ .x = self.x * scalar, .y = self.y * scalar };
+        }
 
-    pub fn addScalar(self: *const Vector2, scalar: f32) Vector2 {
-        return .{ .x = self.x + scalar, .y = self.y + scalar };
-    }
+        pub fn max(a: Self, b: Self) Self {
+            return .{ .x = @max(a.x, b.x), .y = @max(a.y, b.y) };
+        }
 
-    pub fn getAngle(self: *const Vector2) f32 {
-        return std.math.atan2(self.y, self.x);
-    }
+        pub fn addScalar(self: *const Self, scalar: T) Self {
+            return .{ .x = self.x + scalar, .y = self.y + scalar };
+        }
 
-    pub fn rotate(self: *const Vector2, angle: f32) Vector2 {
-        const startAngle: f32 = self.getAngle();
-        const len: f32 = self.length();
-        return .{ .x = std.math.cos(startAngle + angle) * len, .y = std.math.sin(startAngle + angle) * len };
-    }
+        pub fn getAngle(self: *const Self) f32 {
+            return std.math.atan2(self.y, self.x);
+        }
 
-    pub fn dot(a: Vector2, b: Vector2) f32 {
-        return a.x * b.x + a.y * b.y;
-    }
+        pub fn rotate(self: *const Self, angle: f32) Self {
+            const startAngle: f32 = self.getAngle();
+            const len: T = self.length();
+            return .{ .x = std.math.cos(startAngle + angle) * len, .y = std.math.sin(startAngle + angle) * len };
+        }
 
-    pub fn add(a: Vector2, b: Vector2) Vector2 {
-        return .{ .x = a.x + b.x, .y = a.y + b.y };
-    }
+        pub fn dot(a: Self, b: Self) T {
+            return a.x * b.x + a.y * b.y;
+        }
 
-    pub fn subtract(a: Vector2, b: Vector2) Vector2 {
-        return .{ .x = a.x - b.x, .y = a.y - b.y };
-    }
-};
+        pub fn add(a: Self, b: Self) Self {
+            return .{ .x = a.x + b.x, .y = a.y + b.y };
+        }
+
+        pub fn subtract(a: Self, b: Self) Self {
+            return .{ .x = a.x - b.x, .y = a.y - b.y };
+        }
+    };
+}
