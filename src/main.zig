@@ -403,14 +403,29 @@ pub fn main() !void {
         applyUndistortMap(frame.data, undistortedImg, undistortMap);
 
         if (justClicked) {
+            justClicked = false;
             if (frameNum % 2 == 0) {
                 var point: KeyPoint = .{ .pos = .{ .x = @as(f32, @floatFromInt(mouseX)), .y = @as(f32, @floatFromInt(mouseY)) }, .stereoPos = undefined, .descriptor = undefined };
                 setPointDescriptor(undistortedImg, &point, mouseX, mouseY);
-                point.stereoPos = stereoMatch(rightImages.items[frameNum / 2], point);
+                //point.stereoPos = stereoMatch(rightImages.items[frameNum / 2], point);
+                applyUndistortMap(rightImages.items[frameNum / 2].data, undistortedImg, undistortMap);
+
+                displayGrayscaleImage(undistortedImg, points.items, frameNum);
+                c.CNFGSwapBuffers();
+
+                while (!justClicked) {
+                    if (c.CNFGHandleInput() == 0) {
+                        break;
+                    }
+                }
+                justClicked = false;
+                point.stereoPos.x = @as(f32, @floatFromInt(mouseX));
+                point.stereoPos.y = @as(f32, @floatFromInt(mouseY));
+
+                applyUndistortMap(frame.data, undistortedImg, undistortMap);
                 //std.debug.print("{}\n", .{});
                 try points.append(point);
             }
-            justClicked = false;
         }
 
         trackPoints(undistortedImg, points);
