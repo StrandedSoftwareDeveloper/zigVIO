@@ -393,7 +393,7 @@ pub fn main() !void {
         _ = frameTimer.reset();
         c.CNFGClearFrame();
 
-        var frame: Image = leftImages.items[frameNum];
+        const frame: Image = leftImages.items[frameNum];
         if (frameNum % 2 == 1) {
             frame = rightImages.items[frameNum];
         }
@@ -408,21 +408,21 @@ pub fn main() !void {
                 var point: KeyPoint = .{ .pos = .{ .x = @as(f32, @floatFromInt(mouseX)), .y = @as(f32, @floatFromInt(mouseY)) }, .stereoPos = undefined, .descriptor = undefined };
                 setPointDescriptor(undistortedImg, &point, mouseX, mouseY);
                 //point.stereoPos = stereoMatch(rightImages.items[frameNum / 2], point);
-                applyUndistortMap(rightImages.items[frameNum / 2].data, undistortedImg, undistortMap);
+                //applyUndistortMap(rightImages.items[frameNum / 2].data, undistortedImg, undistortMap);
 
-                displayGrayscaleImage(undistortedImg, points.items, frameNum);
-                c.CNFGSwapBuffers();
+                //displayGrayscaleImage(undistortedImg, points.items, frameNum);
+                //c.CNFGSwapBuffers();
 
-                while (!justClicked) {
-                    if (c.CNFGHandleInput() == 0) {
-                        break;
-                    }
-                }
-                justClicked = false;
+                //while (!justClicked) {
+                //    if (c.CNFGHandleInput() == 0) {
+                //        break;
+                //    }
+                //}
+                //justClicked = false;
                 point.stereoPos.x = @as(f32, @floatFromInt(mouseX));
                 point.stereoPos.y = @as(f32, @floatFromInt(mouseY));
 
-                applyUndistortMap(frame.data, undistortedImg, undistortMap);
+                //applyUndistortMap(frame.data, undistortedImg, undistortMap);
                 //std.debug.print("{}\n", .{});
                 try points.append(point);
             }
